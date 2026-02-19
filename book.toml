@@ -6,7 +6,7 @@ language = "en"
 src = "src"
 
 [output.html]
-theme = "navy"
+default-theme = "navy"
 git-repository-url = "https://github.com/cloudstreet-dev/Back-to-Bare-Metal-with-Python-WSGI-and-ASGI"
 git-repository-icon = "fa-github"
 edit-url-template = "https://github.com/cloudstreet-dev/Back-to-Bare-Metal-with-Python-WSGI-and-ASGI/edit/main/{path}"
