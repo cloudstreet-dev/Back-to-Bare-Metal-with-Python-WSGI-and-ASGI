@@ -1,0 +1,18 @@
+[book]
+title = "Back to Bare Metal: WSGI & ASGI for Python Developers"
+authors = ["CloudStreet"]
+description = "Django and FastAPI are just fancy callables. This book strips away the magic, shows you exactly what's happening under the hood, and teaches you to build Python web apps from first principles — synchronous with WSGI, async with ASGI. Know your tools. Really know them."
+language = "en"
+multilingual = false
+src = "src"
+
+[output.html]
+theme = "navy"
+git-repository-url = "https://github.com/cloudstreet-dev/Back-to-Bare-Metal-with-Python-WSGI-and-ASGI"
+git-repository-icon = "fa-github"
+edit-url-template = "https://github.com/cloudstreet-dev/Back-to-Bare-Metal-with-Python-WSGI-and-ASGI/edit/main/{path}"
+
+[output.html.search]
+enable = true
+limit-results = 20
+teaser-word-count = 30
