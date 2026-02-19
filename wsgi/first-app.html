@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-4a58f591.js";
+            window.path_to_searchindex_js = "../searchindex-f264109a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-b3b7d003.js"></script>
@@ -181,6 +181,255 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="your-first-wsgi-app-no-training-wheels"><a class="header" href="#your-first-wsgi-app-no-training-wheels">Your First WSGI App (No Training Wheels)</a></h1>
+<p>Let’s build something real. Not “hello world” (we did that in the introduction) — a genuinely useful WSGI application with multiple routes, request parsing, and proper response handling. All without a framework.</p>
+<p>By the end of this chapter you’ll have a working JSON API that you can run with Gunicorn. It won’t be pretty. That’s the point.</p>
+<h2 id="the-problem"><a class="header" href="#the-problem">The Problem</a></h2>
+<p>We’re building a simple in-memory task management API. It will support:</p>
+<ul>
+<li><code>GET /tasks</code> — list all tasks</li>
+<li><code>POST /tasks</code> — create a task</li>
+<li><code>GET /tasks/{id}</code> — get a specific task</li>
+<li><code>DELETE /tasks/{id}</code> — delete a task</li>
+</ul>
+<p>That’s enough to demonstrate routing, request body parsing, path parameter extraction, and proper HTTP response semantics without drowning in incidental complexity.</p>
+<h2 id="reading-the-request-body"><a class="header" href="#reading-the-request-body">Reading the Request Body</a></h2>
+<p>The first thing most tutorials skip over: how do you read the request body in WSGI?</p>
+<pre><code class="language-python">def read_body(environ) -&gt; bytes:
+    """Read the request body from environ['wsgi.input']."""
+    try:
+        content_length = int(environ.get('CONTENT_LENGTH', 0) or 0)
+    except (ValueError, TypeError):
+        content_length = 0
+
+    if content_length &gt; 0:
+        return environ['wsgi.input'].read(content_length)
+    return b''
+</code></pre>
+<p>Why <code>or 0</code>? Because <code>CONTENT_LENGTH</code> might be an empty string (<code>""</code>), which <code>int()</code> can’t convert. The <code>or 0</code> handles that case. Why the try/except? Because you can’t fully trust incoming headers.</p>
+<p>Why <code>read(content_length)</code> rather than just <code>read()</code>? The spec says <code>wsgi.input</code> may be a socket-backed stream. Calling <code>read()</code> without a limit might block indefinitely waiting for a connection that never closes. Always read exactly <code>Content-Length</code> bytes.</p>
+<h2 id="parsing-json-bodies"><a class="header" href="#parsing-json-bodies">Parsing JSON Bodies</a></h2>
+<pre><code class="language-python">import json
+from typing import Any, Optional
+
+
+def parse_json_body(environ) -&gt; Optional[Any]:
+    """Parse a JSON request body, returning None if absent or invalid."""
+    content_type = environ.get('CONTENT_TYPE', '')
+    if 'application/json' not in content_type:
+        return None
+
+    body = read_body(environ)
+    if not body:
+        return None
+
+    try:
+        return json.loads(body)
+    except json.JSONDecodeError:
+        return None
+</code></pre>
+<h2 id="building-responses"><a class="header" href="#building-responses">Building Responses</a></h2>
+<p>Rather than calling <code>start_response</code> directly everywhere, let’s build a small helper:</p>
+<pre><code class="language-python">def json_response(start_response, data: Any, status: int = 200) -&gt; list[bytes]:
+    """Send a JSON response."""
+    STATUS_PHRASES = {
+        200: "OK",
+        201: "Created",
+        400: "Bad Request",
+        404: "Not Found",
+        405: "Method Not Allowed",
+        500: "Internal Server Error",
+    }
+    body = json.dumps(data, indent=2).encode("utf-8")
+    phrase = STATUS_PHRASES.get(status, "Unknown")
+    start_response(
+        f"{status} {phrase}",
+        [
+            ("Content-Type", "application/json"),
+            ("Content-Length", str(len(body))),
+        ]
+    )
+    return [body]
+</code></pre>
+<h2 id="the-application"><a class="header" href="#the-application">The Application</a></h2>
+<p>Now the actual application. Notice the structure: it’s just a function that dispatches based on method and path.</p>
+<pre><code class="language-python">import json
+import re
+import uuid
+from typing import Any, Optional
+
+
+# In-memory store
+tasks: dict[str, dict] = {}
+
+
+def read_body(environ) -&gt; bytes:
+    try:
+        content_length = int(environ.get('CONTENT_LENGTH', 0) or 0)
+    except (ValueError, TypeError):
+        content_length = 0
+    if content_length &gt; 0:
+        return environ['wsgi.input'].read(content_length)
+    return b''
+
+
+def parse_json_body(environ) -&gt; Optional[Any]:
+    content_type = environ.get('CONTENT_TYPE', '')
+    if 'application/json' not in content_type:
+        return None
+    body = read_body(environ)
+    if not body:
+        return None
+    try:
+        return json.loads(body)
+    except json.JSONDecodeError:
+        return None
+
+
+STATUS_PHRASES = {
+    200: "OK", 201: "Created", 400: "Bad Request",
+    404: "Not Found", 405: "Method Not Allowed",
+}
+
+
+def json_response(start_response, data: Any, status: int = 200) -&gt; list[bytes]:
+    body = json.dumps(data, indent=2).encode("utf-8")
+    phrase = STATUS_PHRASES.get(status, "Unknown")
+    start_response(
+        f"{status} {phrase}",
+        [("Content-Type", "application/json"),
+         ("Content-Length", str(len(body)))]
+    )
+    return [body]
+
+
+def application(environ, start_response):
+    method = environ['REQUEST_METHOD']
+    path = environ['PATH_INFO']
+
+    # Route: GET /tasks
+    if path == '/tasks' and method == 'GET':
+        return json_response(start_response, list(tasks.values()))
+
+    # Route: POST /tasks
+    if path == '/tasks' and method == 'POST':
+        data = parse_json_body(environ)
+        if not data or 'title' not in data:
+            return json_response(start_response,
+                                 {"error": "title is required"}, 400)
+        task = {
+            "id": str(uuid.uuid4()),
+            "title": data['title'],
+            "done": False,
+        }
+        tasks[task['id']] = task
+        return json_response(start_response, task, 201)
+
+    # Route: /tasks/{id}
+    match = re.fullmatch(r'/tasks/([^/]+)', path)
+    if match:
+        task_id = match.group(1)
+
+        if method == 'GET':
+            task = tasks.get(task_id)
+            if task is None:
+                return json_response(start_response,
+                                     {"error": "not found"}, 404)
+            return json_response(start_response, task)
+
+        if method == 'DELETE':
+            if task_id not in tasks:
+                return json_response(start_response,
+                                     {"error": "not found"}, 404)
+            deleted = tasks.pop(task_id)
+            return json_response(start_response, deleted)
+
+        return json_response(start_response,
+                             {"error": "method not allowed"}, 405)
+
+    # 404 for everything else
+    return json_response(start_response, {"error": "not found"}, 404)
+
+
+if __name__ == '__main__':
+    from wsgiref.simple_server import make_server
+    print("Serving on http://127.0.0.1:8000")
+    with make_server('127.0.0.1', 8000, application) as server:
+        server.serve_forever()
+</code></pre>
+<p>Save this as <code>tasks_app.py</code> and run it:</p>
+<pre><code class="language-bash">python tasks_app.py
+</code></pre>
+<p>Or with Gunicorn:</p>
+<pre><code class="language-bash">pip install gunicorn
+gunicorn tasks_app:application
+</code></pre>
+<h2 id="trying-it-out"><a class="header" href="#trying-it-out">Trying It Out</a></h2>
+<pre><code class="language-bash"># Create a task
+curl -X POST http://localhost:8000/tasks \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Learn WSGI"}'
+# {"id": "abc-123", "title": "Learn WSGI", "done": false}
+
+# List tasks
+curl http://localhost:8000/tasks
+# [{"id": "abc-123", "title": "Learn WSGI", "done": false}]
+
+# Get a specific task
+curl http://localhost:8000/tasks/abc-123
+# {"id": "abc-123", "title": "Learn WSGI", "done": false}
+
+# Delete a task
+curl -X DELETE http://localhost:8000/tasks/abc-123
+# {"id": "abc-123", "title": "Learn WSGI", "done": false}
+
+# Missing title
+curl -X POST http://localhost:8000/tasks \
+  -H "Content-Type: application/json" \
+  -d '{"description": "oops"}'
+# {"error": "title is required"}
+
+# Not found
+curl http://localhost:8000/tasks/nonexistent
+# {"error": "not found"}
+</code></pre>
+<p>It works. No framework involved. The routing is regex matching on <code>PATH_INFO</code>. The request parsing is reading from <code>wsgi.input</code>. The responses are byte strings with proper headers.</p>
+<h2 id="what-this-reveals-about-frameworks"><a class="header" href="#what-this-reveals-about-frameworks">What This Reveals About Frameworks</a></h2>
+<p>Look at our <code>application</code> function and notice what’s getting tedious:</p>
+<ol>
+<li><strong>Routing</strong>: <code>if path == '/tasks' and method == 'GET'</code> — this will get unreadable fast</li>
+<li><strong>Response construction</strong>: <code>json_response(start_response, data, status)</code> — we’re passing <code>start_response</code> everywhere</li>
+<li><strong>Request parsing</strong>: <code>parse_json_body(environ)</code> — repeated on every endpoint that accepts a body</li>
+<li><strong>Error handling</strong>: every route independently returns error responses</li>
+</ol>
+<p>A framework solves these problems. Flask gives you <code>@app.route('/tasks', methods=['GET'])</code>. Django gives you URL patterns and view functions. FastAPI gives you type annotations and automatic parsing.</p>
+<p>But now you know what they’re solving. The <code>@app.route</code> decorator is just adding your function to a routing table and wrapping it so it conforms to the WSGI interface. The request object (<code>flask.request</code>, <code>django.request</code>) is just a wrapper around <code>environ</code>. The response class is a wrapper around <code>start_response</code> and the return value.</p>
+<p>It’s convenience all the way down.</p>
+<h2 id="the-wsgiref-module"><a class="header" href="#the-wsgiref-module">The <code>wsgiref</code> Module</a></h2>
+<p>Python’s standard library includes <code>wsgiref</code>, a reference implementation of a WSGI server:</p>
+<pre><code class="language-python">from wsgiref.simple_server import make_server
+from wsgiref.validate import validator
+
+# Wrap your app with the validator to catch WSGI spec violations
+validated_app = validator(application)
+
+with make_server('127.0.0.1', 8000, validated_app) as server:
+    server.serve_forever()
+</code></pre>
+<p><code>wsgiref.validate.validator</code> wraps your application and checks that it correctly implements the WSGI spec — proper return types, calling <code>start_response</code> at the right time, etc. Use it during development; remove it for production.</p>
+<p><code>wsgiref.simple_server</code> is not production-ready (it’s single-threaded and handles one request at a time), but it’s useful for local development when you want zero dependencies.</p>
+<h2 id="on-state-and-concurrency"><a class="header" href="#on-state-and-concurrency">On State and Concurrency</a></h2>
+<p>The <code>tasks</code> dictionary in our app is module-level state. This works fine for a single-process server, but Gunicorn’s default is to use multiple worker processes. Each worker has its own copy of the module, its own <code>tasks</code> dict. Changes in worker 1 are invisible to worker 2.</p>
+<p>For production, you’d use a database or shared cache (Redis) instead of in-memory state. This isn’t a WSGI limitation — it’s just how multi-process architectures work. But it’s worth being explicit about: WSGI does not share state between requests. Each call to <code>application()</code> is independent.</p>
+<p>This is actually a feature. It makes WSGI applications easy to reason about and easy to scale horizontally. Stateless by default.</p>
+<h2 id="exercises"><a class="header" href="#exercises">Exercises</a></h2>
+<p>Before moving on, try these modifications to the app:</p>
+<ol>
+<li>Add a <code>PATCH /tasks/{id}</code> endpoint that updates the <code>done</code> field</li>
+<li>Add proper <code>Content-Type</code> validation — return 415 if it’s not <code>application/json</code> on POST</li>
+<li>Add a request logger: print method, path, and status code for every request</li>
+<li>Handle <code>PATCH /tasks/{id}</code> — change the <code>done</code> field</li>
+</ol>
+<p>Exercise 3 is a preview of the next chapter. The logging belongs in middleware.</p>
 
                     </main>
 
