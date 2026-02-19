@@ -1,7 +1,5 @@
 # Summary
 
-[Introduction](introduction.md)
-
 # Part I: What You Think You Know
 
 - [The Lie You've Been Living](introduction.md)
