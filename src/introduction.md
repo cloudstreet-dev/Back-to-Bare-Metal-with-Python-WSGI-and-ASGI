@@ -1,5 +1,9 @@
 # The Lie You've Been Living
 
+*With special thanks to Georgiy Treyvus, whose idea made this book happen.*
+
+---
+
 You've been writing Python web applications for — let's say — a while. You know how to define routes. You know how to write views. You know that `request.method` gives you `"GET"` or `"POST"`, and you know that returning a `Response` object makes things appear in someone's browser.
 
 What you may not know is what any of that actually *is*.

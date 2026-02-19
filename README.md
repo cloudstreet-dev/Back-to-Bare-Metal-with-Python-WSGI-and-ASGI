@@ -4,6 +4,8 @@
 
 **Part of the [CloudStreet](https://github.com/cloudstreet-dev) series.**
 
+*With special thanks to Georgiy Treyvus, whose idea inspired this book.*
+
 ---
 
 ## What This Book Is
